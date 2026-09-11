@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>USB Control Master</title>
+  <link rel="stylesheet" href="/static/style.css?v=3">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>USB Control Master</h1>
+      <p>Centralized USB Mass Storage Control</p>
+    </div>
+    <button type="button" onclick="createKey()">+ Registration Key</button>
+  </header>
+
+  <section class="keybox" id="keybox">Klik <b>+ Registration Key</b> untuk membuat key baru.</section>
+
+  <section class="card">
+    <div class="section-title">
+      <h2>Devices</h2>
+      <button class="secondary" type="button" onclick="loadDevices()">Refresh</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Nama Tampilan</th>
+            <th>Computer</th>
+            <th>Device ID</th>
+            <th>USB Mass Storage</th>
+            <th>MTP / WPD</th>
+            <th>Last Seen</th>
+            <th>Aksi</th>
+          </tr>
+        </thead>
+        <tbody id="devices">
+        {% for d in devices %}
+          <tr>
+            <td><strong>{{ d.display_name or d.device_name }}</strong></td>
+            <td>{{ d.device_name }}</td>
+            <td><code>{{ d.device_id }}</code></td>
+            <td><span class="badge {{ 'on' if d.usb_enabled else 'off' }}">{{ 'ENABLED' if d.usb_enabled else 'DISABLED' }}</span></td>
+            <td><span class="badge {{ 'on' if d.mtp_enabled else 'off' }}">{{ 'ENABLED' if d.mtp_enabled else 'DISABLED' }}</span></td>
+            <td>{{ d.last_seen or '-' }}</td>
+            <td class="actions">
+              <button type="button" class="rename" onclick='renameDevice({{ d.device_id|tojson }}, {{ (d.display_name or d.device_name)|tojson }})'>Rename</button>
+              <button type="button" class="{{ 'danger' if d.usb_enabled else 'success' }}" onclick='setUSB({{ d.device_id|tojson }}, {{ 'false' if d.usb_enabled else 'true' }})'>{{ 'Disable USB' if d.usb_enabled else 'Enable USB' }}</button>
+              <button type="button" class="{{ 'danger' if d.mtp_enabled else 'success' }}" onclick='setMTP({{ d.device_id|tojson }}, {{ 'false' if d.mtp_enabled else 'true' }})'>{{ 'Disable MTP' if d.mtp_enabled else 'Enable MTP' }}</button>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="7" class="empty">Belum ada device.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<script>
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function createKey() {
+  try {
+    const res = await fetch('/api/enrollment-keys', {method:'POST', cache:'no-store'});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Gagal membuat key');
+    document.getElementById('keybox').innerHTML = 'Registration Key baru: <code>' + escapeHtml(data.key) + '</code>';
+  } catch (e) {
+    alert(e.message || 'Gagal membuat Registration Key');
+  }
+}
+
+async function loadDevices() {
+  try {
+    const res = await fetch('/api/devices', {cache:'no-store'});
+    const devices = await res.json();
+    if (!res.ok) throw new Error(devices.detail || 'Gagal mengambil device');
+    const tbody = document.getElementById('devices');
+    if (!devices.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty">Belum ada device.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = devices.map(d => {
+      const shown = d.display_name || d.device_name || d.device_id;
+      const usb = !!d.usb_enabled;
+      const mtp = d.mtp_enabled !== false;
+      return '<tr>' +
+        '<td><strong>' + escapeHtml(shown) + '</strong></td>' +
+        '<td>' + escapeHtml(d.device_name) + '</td>' +
+        '<td><code>' + escapeHtml(d.device_id) + '</code></td>' +
+        '<td><span class="badge ' + (usb ? 'on' : 'off') + '">' + (usb ? 'ENABLED' : 'DISABLED') + '</span></td>' +
+        '<td><span class="badge ' + (mtp ? 'on' : 'off') + '">' + (mtp ? 'ENABLED' : 'DISABLED') + '</span></td>' +
+        '<td>' + escapeHtml(d.last_seen || '-') + '</td>' +
+        '<td class="actions">' +
+        '<button type="button" class="rename" onclick=\'renameDevice(' + JSON.stringify(d.device_id) + ',' + JSON.stringify(shown) + ')\'>Rename</button>' +
+        '<button type="button" class="' + (usb ? 'danger' : 'success') + '" onclick=\'setUSB(' + JSON.stringify(d.device_id) + ',' + (!usb) + ')\'>' + (usb ? 'Disable USB' : 'Enable USB') + '</button>' +
+        '<button type="button" class="' + (mtp ? 'danger' : 'success') + '" onclick=\'setMTP(' + JSON.stringify(d.device_id) + ',' + (!mtp) + ')\'>' + (mtp ? 'Disable MTP' : 'Enable MTP') + '</button>' +
+        '</td></tr>';
+    }).join('');
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function setMTP(deviceId, enabled) {
+  try {
+    const res = await fetch('/api/devices/' + encodeURIComponent(deviceId) + '/mtp', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({enabled:!!enabled})
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Gagal mengubah policy MTP');
+    await loadDevices();
+  } catch(e) { alert(e.message || 'Gagal mengubah policy MTP'); }
+}
+
+async function renameDevice(deviceId, current) {
+  const name = prompt('Nama tampilan device:', current);
+  if (name === null) return;
+  const trimmed = name.trim();
+  if (!trimmed) { alert('Nama tidak boleh kosong.'); return; }
+  try {
+    const res = await fetch('/api/devices/' + encodeURIComponent(deviceId) + '/rename', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({display_name:trimmed})
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Gagal rename');
+    await loadDevices();
+  } catch(e) { alert(e.message || 'Gagal rename'); }
+}
+
+async function setUSB(deviceId, enabled) {
+  try {
+    const res = await fetch('/api/devices/' + encodeURIComponent(deviceId) + '/usb', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({enabled:!!enabled})
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Gagal mengubah policy');
+    await loadDevices();
+  } catch(e) { alert(e.message || 'Gagal mengubah policy'); }
+}
+
+// Refresh periodically, but the page also works even if this script is the only JS loaded.
+setInterval(loadDevices, 10000);
+</script>
+</body>
+</html>
